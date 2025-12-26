@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>家庭保險守護者 Pro</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1163/1163474.png">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F7F3F0; color: #4A3E3E; }
+        .wood-card { background: #FFFFFF; border-bottom: 3px solid #D2B48C; transition: all 0.2s; position: relative; }
+        .stats-gradient { background: linear-gradient(135deg, #8B5E3C 0%, #6F4E37 100%); }
+        .nav-tab { flex: 1; text-align: center; padding: 12px 0; font-size: 10px; color: #A67C52; }
+        .nav-tab.active { color: #5D4037; font-weight: bold; }
+        input, select, textarea { background-color: #FDFBF9; border: 1px solid #E5D3B3; border-radius: 12px; padding: 10px; width: 100%; font-size: 14px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const App = () => {
+            const [policies, setPolicies] = useState([]);
+            const [activeTab, setActiveTab] = useState('timeline');
+            const [showModal, setShowModal] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(false);
+            const [usdRate, setUsdRate] = useState(32.5);
+            const [filterName, setFilterName] = useState('全部');
+            
+            const [formData, setFormData] = useState({
+                id: null, name: '', company: '', policyName: '', type: 'life',
+                currency: 'TWD', amount: '', paymentDate: '', 
+                totalTerms: '', currentTerm: '', 
+                payMethod: '信用卡', payer: '', bankName: '', carNumber: '', note: ''
+            });
+
+            const CLOUD_URL = "https://script.google.com/macros/s/AKfycbwwJW9TlUoXgTdiM0WQplBINFyflc8ioMcRJhe_KcTkOte3DopLJ6IYd4UbgHI22HjCsQ/exec";
+
+            useEffect(() => {
+                const saved = localStorage.getItem('insurance-pro-v2');
+                if (saved) setPolicies(JSON.parse(saved));
+                fetch('https://api.exchangerate-api.com/v4/latest/USD')
+                    .then(res => res.json()).then(data => setUsdRate(data.rates.TWD)).catch(() => {});
+            }, []);
+
+            const updateAndSync = (newData) => {
+                setPolicies(newData);
+                localStorage.setItem('insurance-pro-v2', JSON.stringify(newData));
+                setIsSyncing(true);
+                fetch(CLOUD_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(newData) })
+                .then(() => setTimeout(() => setIsSyncing(false), 800)).catch(() => setIsSyncing(false));
+            };
+
+            const toTWD = (amt, curr) => curr === 'USD' ? Number(amt) * usdRate : Number(amt);
+            const names = useMemo(() => ['全部', ...new Set(policies.map(p => p.name))], [policies]);
+
+            // 取得保單月份的輔助函式
+            const getMonth = (dateStr) => dateStr ? new Date(dateStr).getMonth() + 1 : 0;
+
+            const displayPolicies = useMemo(() => {
+                let filtered = policies;
+                if (activeTab === 'property') filtered = policies.filter(p => p.type === 'property');
+                else if (activeTab === 'timeline') filtered = policies.filter(p => p.type === 'life');
+                
+                if (filterName !== '全部') filtered = filtered.filter(p => p.name === filterName);
+                
+                // 優先按「日期」排序
+                return filtered.sort((a, b) => {
+                    if (!a.paymentDate) return 1;
+                    if (!b.paymentDate) return -1;
+                    return new Date(a.paymentDate) - new Date(b.paymentDate);
+                });
+            }, [policies, activeTab, filterName]);
+
+            const monthlySummary = useMemo(() => {
+                const summary = Array(12).fill(0);
+                policies.forEach(p => {
+                    const m = getMonth(p.paymentDate);
+                    if (m > 0) summary[m - 1] += toTWD(p.amount, p.currency);
+                });
+                return summary;
+            }, [policies, usdRate]);
+
+            const formatDate = (dateStr) => {
+                if (!dateStr) return "未設定日期";
+                const d = new Date(dateStr);
+                return `${d.getMonth() + 1}/${d.getDate()}`;
+            };
+
+            return (
+                <div className="min-h-screen pb-32">
+                    {/* Header */}
+                    <div className="bg-[#5D4037] text-[#FDF5E6] p-6 rounded-b-[30px] shadow-lg sticky top-0 z-20">
+                        <div className="max-w-md mx-auto flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl font-bold">家庭保險守護者</h1>
+                                <p className="text-[10px] opacity-70 mt-1">即時匯率: {usdRate} | 支援具體日期顯示</p>
+                            </div>
+                            {isSyncing && <div className="text-[10px] animate-pulse">備份中...</div>}
+                        </div>
+                    </div>
+
+                    <div className="max-w-md mx-auto px-5 mt-6">
+                        
+                        {/* Tab 1: 壽險/醫療時間軸 */}
+                        {activeTab === 'timeline' && (
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-center mb-2">
+                                    <h2 className="font-bold text-[#8B5E3C]">壽險與醫療險明細</h2>
+                                    <select className="w-24 p-1 text-xs" value={filterName} onChange={e => setFilterName(e.target.value)}>
+                                        {names.map(n => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                </div>
+                                {displayPolicies.length === 0 ? <p className="text-center text-gray-400 py-10">尚無保單資料</p> : 
+                                 displayPolicies.map(p => (
+                                    <div key={p.id} onClick={() => {setFormData(p); setShowModal(true);}} className="wood-card p-4 rounded-xl border border-[#E5D3B3]">
+                                        <div className="flex justify-between">
+                                            <span className="text-[11px] font-bold px-3 py-0.5 bg-[#8B5E3C] text-white rounded-full">
+                                                📅 {formatDate(p.paymentDate)} 繳費
+                                            </span>
+                                            {getMonth(p.paymentDate) === (new Date().getMonth() + 1) && 
+                                                <span className="text-[10px] text-red-500 font-bold animate-pulse">本月待繳項</span>
+                                            }
+                                        </div>
+                                        <div className="mt-3 flex justify-between items-end">
+                                            <div>
+                                                <div className="text-sm font-bold text-gray-800">{p.policyName}</div>
+                                                <div className="text-[11px] text-gray-500">{p.name} · {p.company}</div>
+                                                <div className="flex gap-2 mt-1">
+                                                    <span className="text-[9px] bg-gray-100 px-1.5 rounded text-gray-600">期數: {p.currentTerm}/{p.totalTerms}</span>
+                                                    <span className="text-[9px] bg-orange-50 px-1.5 rounded text-[#8B5E3C]">{p.payMethod}</span>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-[#8B5E3C] font-bold">{p.currency} {Number(p.amount).toLocaleString()}</div>
+                                                {p.currency === 'USD' && <div className="text-[9px] text-gray-400">≈ NT$ {Math.round(toTWD(p.amount, p.currency)).toLocaleString()}</div>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Tab 2: 產險/車號 */}
+                        {activeTab === 'property' && (
+                            <div className="space-y-4">
+                                <h2 className="font-bold text-[#8B5E3C]">產險(汽機車)明細</h2>
+                                {displayPolicies.map(p => (
+                                    <div key={p.id} onClick={() => {setFormData(p); setShowModal(true);}} className="wood-card p-4 rounded-xl border border-[#E5D3B3] bg-blue-50/10">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <div className="text-[10px] font-bold text-blue-600">車號: {p.carNumber || '未填'}</div>
+                                                <div className="text-sm font-bold mt-1">{p.policyName}</div>
+                                                <div className="text-[11px] text-gray-500">日期: {formatDate(p.paymentDate)} | {p.name}</div>
+                                            </div>
+                                            <div className="text-right text-[#8B5E3C] font-bold">NT$ {Number(p.amount).toLocaleString()}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Tab 3: 每月預繳彙整表 */}
+                        {activeTab === 'summary' && (
+                            <div className="space-y-4 pb-10">
+                                <div className="stats-gradient p-6 rounded-2xl text-white shadow-lg mb-6 text-center">
+                                    <div className="text-xs opacity-80">年度總支出預估 (TWD)</div>
+                                    <div className="text-3xl font-bold mt-2">NT$ {monthlySummary.reduce((a,b)=>a+b, 0).toLocaleString()}</div>
+                                </div>
+                                <div className="bg-white rounded-2xl p-4 border border-[#E5D3B3]">
+                                    <h3 className="text-sm font-bold mb-4">1-12 月保費支出分佈</h3>
+                                    {monthlySummary.map((amt, idx) => (
+                                        <div key={idx} className={`flex items-center gap-3 mb-3 ${idx+1 === (new Date().getMonth()+1) ? 'bg-orange-50 rounded-lg p-1' : ''}`}>
+                                            <div className="w-8 text-[11px] font-bold text-gray-400">{idx+1}月</div>
+                                            <div className="flex-1 bg-gray-100 h-3 rounded-full overflow-hidden">
+                                                <div className="bg-[#D2B48C] h-full transition-all duration-500" style={{width: `${(amt/Math.max(...monthlySummary, 1)*100)||0}%`}}></div>
+                                            </div>
+                                            <div className="w-20 text-right text-[11px] font-bold">NT$ {Math.round(amt).toLocaleString()}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 底部導覽 */}
+                    <div className="fixed bottom-0 inset-x-0 bg-white border-t border-[#E5D3B3] flex shadow-2xl z-30 pb-safe">
+                        <div onClick={()=>setActiveTab('timeline')} className={`nav-tab ${activeTab==='timeline'?'active':''}`}>🕒<br/>壽險時間軸</div>
+                        <div onClick={()=>setActiveTab('property')} className={`nav-tab ${activeTab==='property'?'active':''}`}>🚗<br/>產險/車號</div>
+                        <div onClick={()=>setActiveTab('summary')} className={`nav-tab ${activeTab==='summary'?'active':''}`}>📊<br/>每月彙整</div>
+                        <div onClick={() => { setFormData({id: null, name: '', company: '', policyName: '', type: 'life', currency: 'TWD', amount: '', paymentDate: '', totalTerms: '', currentTerm: '', payMethod: '信用卡', payer: '', bankName: '', carNumber: '', note: ''}); setShowModal(true); }} className="flex-1 text-center py-2 bg-[#8B5E3C] text-white font-bold flex flex-col justify-center">＋<br/>新增</div>
+                    </div>
+
+                    {/* 詳細資料 Modal */}
+                    {showModal && (
+                        <div className="fixed inset-0 z-[100] bg-[#5D4037]/60 backdrop-blur-md flex items-end sm:items-center justify-center">
+                            <div className="bg-[#FDFBF9] w-full max-w-md rounded-t-[32px] p-8 max-h-[95vh] overflow-y-auto">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-lg font-bold">保單資料編輯</h3>
+                                    <button onClick={()=>setShowModal(false)} className="text-xl">✕</button>
+                                </div>
+                                <form onSubmit={(e)=>{
+                                    e.preventDefault();
+                                    const newData = formData.id ? policies.map(p=>p.id===formData.id?formData:p) : [...policies, {...formData, id: Date.now()}];
+                                    updateAndSync(newData); setShowModal(false);
+                                }} className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label className="text-xs text-[#8B5E3C]">被保人</label><input required value={formData.name} onChange={e=>setFormData({...formData, name:e.target.value})} placeholder="人名"/></div>
+                                        <div><label className="text-xs text-[#8B5E3C]">類別</label>
+                                            <select value={formData.type} onChange={e=>setFormData({...formData, type:e.target.value})}>
+                                                <option value="life">壽險/醫療</option><option value="property">產險 (車險)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label className="text-xs text-[#8B5E3C]">保險公司</label><input required value={formData.company} onChange={e=>setFormData({...formData, company:e.target.value})}/></div>
+                                        <div><label className="text-xs text-[#8B5E3C]">保單名稱</label><input required value={formData.policyName} onChange={e=>setFormData({...formData, policyName:e.target.value})}/></div>
+                                    </div>
+                                    
+                                    {/* 重點更新：日期選擇器 */}
+                                    <div className="bg-orange-50 p-3 rounded-xl">
+                                        <label className="text-xs font-bold text-[#8B5E3C]">下次繳費/扣款具體日期</label>
+                                        <input required type="date" value={formData.paymentDate} onChange={e=>setFormData({...formData, paymentDate:e.target.value})} className="mt-1 font-bold"/>
+                                        <p className="text-[10px] text-gray-400 mt-1">＊系統將依此日期自動排序與計算月份</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-3">
+                                        <div><label className="text-xs text-[#8B5E3C]">幣別</label>
+                                            <select value={formData.currency} onChange={e=>setFormData({...formData, currency:e.target.value})}>
+                                                <option value="TWD">台幣</option><option value="USD">美金</option>
+                                            </select>
+                                        </div>
+                                        <div className="col-span-2"><label className="text-xs text-[#8B5E3C]">保費金額</label><input required type="number" value={formData.amount} onChange={e=>setFormData({...formData, amount:e.target.value})}/></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label className="text-xs text-[#8B5E3C]">已繳期數</label><input type="number" value={formData.currentTerm} onChange={e=>setFormData({...formData, currentTerm: e.target.value})}/></div>
+                                        <div><label className="text-xs text-[#8B5E3C]">總期數</label><input type="number" value={formData.totalTerms} onChange={e=>setFormData({...formData, totalTerms: e.target.value})}/></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3 border-t pt-4">
+                                        <div><label className="text-xs text-[#8B5E3C]">繳款方式</label>
+                                            <select value={formData.payMethod} onChange={e=>setFormData({...formData, payMethod:e.target.value})}>
+                                                <option value="信用卡">信用卡</option><option value="自動轉帳">自動轉帳</option><option value="匯款">匯款</option>
+                                            </select>
+                                        </div>
+                                        <div><label className="text-xs text-[#8B5E3C]">繳款人</label><input value={formData.payer} onChange={e=>setFormData({...formData, payer:e.target.value})}/></div>
+                                    </div>
+                                    <div><label className="text-xs text-[#8B5E3C]">金融機構 (卡片名稱/銀行)</label><input value={formData.bankName} onChange={e=>setFormData({...formData, bankName:e.target.value})}/></div>
+                                    {formData.type === 'property' && (
+                                        <div><label className="text-xs text-blue-600 font-bold">車牌號碼 (產險專用)</label><input value={formData.carNumber} onChange={e=>setFormData({...formData, carNumber:e.target.value})} placeholder="例如: ABC-1234"/></div>
+                                    )}
+                                    <div><label className="text-xs text-[#8B5E3C]">備註欄</label><textarea rows="2" value={formData.note} onChange={e=>setFormData({...formData, note:e.target.value})}></textarea></div>
+                                    <div className="flex gap-3 pt-4">
+                                        {formData.id && <button type="button" onClick={()=>{updateAndSync(policies.filter(p=>p.id!==formData.id)); setShowModal(false);}} className="flex-1 bg-red-50 text-red-500 py-3 rounded-xl">刪除</button>}
+                                        <button type="submit" className="flex-[2] bg-[#8B5E3C] text-white py-3 rounded-xl font-bold">確認儲存</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
